@@ -1,0 +1,4 @@
+pycryptodome
+requests
+psycopg2-binary # just for development, exclude later 
+flask # just for development, exclude later

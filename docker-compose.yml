@@ -1,0 +1,26 @@
+services:
+  passkey-db:
+    restart: always
+    build:
+      context: ./services/postgres
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_USER=postgres_user 
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=mydb
+    ports:
+      - 5432:5432
+    volumes: 
+      - postgres_data:/var/lib/postgresql/data 
+  
+  server-api:
+    build: 
+      context: ./services/server_node
+      dockerfile: Dockerfile
+    ports:
+      - 5000:5000
+    depends_on:
+      - passkey-db
+
+volumes:
+  postgres_data:
