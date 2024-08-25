@@ -1,14 +1,21 @@
-import requests, base64
-from Crypto.Signature import pkcs1_15
-from Crypto.Hash import SHA256
-from Crypto.PublicKey import RSA
+import requests
+from anoncreds import *
 
 # Configurations
 PRIVATE_KEY_FILE_NAME = "myprivatekey.pem"
 SERVER_ADDRESS = "http://localhost:5000"  # IP address + PORT
 SERVER_ENDPOINT_SIGNIN = "/signin"
 SERVER_ENDPOINT_SIGNUP = "/signup" 
-SERVER_ENDPOINT_CHALLENGE_ANSWER = "/challengeanswer"
+SERVER_ENDPOINT_RECEIVE_CREDENTIAL_REQUEST = "/receive_credential_request"
+SERVER_ENDPOINT_RECEIVE_CREDENTIAL_PRESENTATION = "/receive_credential_presentation"
+
+
+# Credential
+
+entropy = "entropy"
+link_secret = create_link_secret()  
+link_secret_id = "default"
+
 
 def exit_program():
     print('Exiting the program...')
@@ -20,103 +27,150 @@ def asks_username(text: str) -> str:
         username = input(text)
     return username
 
-def asks_private_key_file_password() -> bytes:
-    private_key_password = input("Write the password for your private key file: \
-                                 \n(Or leave it blank if you don't want to.)\n").encode('utf-8')    
-    return (private_key_password or None)  # Short-circuit evaluation. b'' returns False.
+
+while True:
+
+    user_input = input("What do you want to do? \n\t1-Sign In\n\t2-Sign Up\n\t3-Exit\n")
+    if user_input == '1':
+        username = asks_username("What's your username?\n")
+
+        # Create post request
+        response = requests.post(
+            SERVER_ADDRESS + SERVER_ENDPOINT_SIGNIN,
+            json= {'username': username}
+        )
+        if response.status_code != 200:
+            print(f"Request failed with status code: {response.status_code}\n")
+            print(response.json())
+            exit_program()
+
+        data = response.json()
+
+        pres_req = PresentationRequest.load(data['pres_req'])
+        rev_state = CredentialRevocationState.load(data['rev_state'])
+        schema = Schema.load(data['schema'])
+        cred_def_pub = CredentialDefinition.load(data['cred_def_pub'])
+        schema_id = data['schema_id']
+        cred_def_id = data['cred_def_id']
+
+        time_after_creating_cred = data['time_after_creating_cred']
+        schemas = {schema_id: schema}               
+        cred_defs = {cred_def_id: cred_def_pub}
 
 
-user_input = input("What do you want to do? \n\t1-Sign In\n\t2-Sign Up\n\t3-Exit\n")
-if user_input == '1':
-    username = asks_username("What's your username?\n")
+        try:
+            with open("credential.json", "r") as f:
+                recv_cred = W3cCredential.load(f.read())
+        except FileNotFoundError:
+            print('Your credential was not found!')
+            exit_program()
 
-    # Create post request
-    response = requests.post(
-        SERVER_ADDRESS + SERVER_ENDPOINT_SIGNIN,
-        json= {'username': username}
-    )
-    if response.status_code != 200:
-        print(f"Request failed with status code: {response.status_code}\n")
-        print(response.json())
+        try:
+            with open("link_secret", "r") as f:
+                link_secret = f.read()
+        except FileNotFoundError:
+            print('Your link secret was not found!')
+            exit_program()
+        
+
+        # Create Presentation using W3C credential
+        present = PresentCredentials()
+
+        present.add_attributes(
+            recv_cred,
+            "attr1_referent",
+            reveal=True,
+            timestamp=time_after_creating_cred,
+            rev_state=rev_state,
+        )
+
+        present.add_attributes(
+            recv_cred,
+            "attr2_referent",
+            reveal=True,
+            timestamp=time_after_creating_cred,
+            rev_state=rev_state,
+        )
+
+        presentation = W3cPresentation.create(
+            pres_req,
+            present,
+            link_secret,
+            schemas,
+            cred_defs,
+        )
+
+
+        #Send presentation to server.
+        response = requests.post(
+            SERVER_ADDRESS + SERVER_ENDPOINT_RECEIVE_CREDENTIAL_PRESENTATION,  
+            json = {'presentation': presentation.to_json(),
+                    'username' : username }
+        )
+        if response.status_code != 200:
+            print(f"Request failed with status code: {response.status_code}\n")
+            print(response.json())
+            exit_program()
+
+        data = response.json()
+        print(data)
+
+        
+
+    elif user_input == '2':
+        # Asks for username
+        username = asks_username("Choose your username:\n")
+
+        # Creates the request
+        request_body = {
+            "username": username
+        }   
+
+        response = requests.post(
+            SERVER_ADDRESS + SERVER_ENDPOINT_SIGNUP,
+            json= request_body
+        )
+        if response.status_code != 200:
+            print(f"Request failed with status code: {response.status_code}\n")
+            print(response.json())
+            exit_program()
+
+        print('Response received')   
+        # Creates Credential Request.
+        cred_offer = CredentialOffer.load(response.json()['cred_offer'])
+        cred_def_pub = CredentialDefinition.load(response.json()['cred_def_pub'])
+        token = response.json()['token']
+
+        cred_request, cred_request_metadata = CredentialRequest.create(                    
+            entropy, None, cred_def_pub, link_secret, link_secret_id, cred_offer
+        )
+
+        request_body = {
+            "cred_request" : cred_request.to_json(),
+            "cred_offer" : cred_offer.to_json(),
+            "token" : token,
+            "username" : username
+        }
+
+        response = requests.post(
+            SERVER_ADDRESS + SERVER_ENDPOINT_RECEIVE_CREDENTIAL_REQUEST,
+            json= request_body
+        )
+
+        issue_cred = W3cCredential.load(response.json()["issue_cred"])
+        rev_reg_def_pub = RevocationRegistryDefinition.load(response.json()["rev_reg_def_pub"])
+
+        recv_cred = issue_cred.process(                                                 
+            cred_request_metadata, link_secret, cred_def_pub, rev_reg_def_pub
+        )
+
+        with open("link_secret", "w") as f:
+            f.write(link_secret)
+
+
+        with open("credential.json", "w") as f:
+            f.write(recv_cred.to_json())
+
+        
+    else:
         exit_program()
-
-    # Store the challenge
-    challenge = response.json()['challenge']
-
-    # Asks for a password for the private key file.
-    private_key_password = asks_private_key_file_password()
-
-    try:
-        with open("myprivatekey.pem", "rb") as f:
-            data = f.read()
-            user_key = RSA.import_key(data, private_key_password)
-    except ValueError:
-        print('Wrong password!')
-        exit_program()
-    except FileNotFoundError:
-        print('Your private key was not found!')
-        exit_program()
-
-    # Signs the challenge.
-    data_hash = SHA256.new()
-    data_hash.update(challenge.encode('utf-8'))
-
-    signer = pkcs1_15.new(user_key)
-    signature = signer.sign(data_hash)
-
-    # Signature to base64 and POST request
-    encoded_signature = base64.b64encode(signature).decode('utf-8')
-    response = requests.post(
-        SERVER_ADDRESS + SERVER_ENDPOINT_CHALLENGE_ANSWER,
-        json= {'username': username,
-               'signature': encoded_signature}
-    )
-    if response.status_code != 200:
-        print(f"Request failed with status code: {response.status_code}\n")
-        print(response.json())
-        exit_program()
-    
-    print(response.json())  # TODO: output status to the user
-    
-
-elif user_input == '2':
-    # Creates keypair
-    key_pair = RSA.generate(2048)
-
-    # Asks for username
-    username = asks_username("Choose your username:\n")
-
-    # Asks for a password for the private key file.
-    private_key_password = asks_private_key_file_password()
-
-    # Stores private key in a .pem file.
-    with open(PRIVATE_KEY_FILE_NAME , "wb") as f:
-        data = key_pair.export_key(passphrase=private_key_password,
-                                    pkcs=8,
-                                    protection='PBKDF2WithHMAC-SHA512AndAES256-CBC',
-                                    prot_params={'iteration_count':131072})
-        f.write(data)
-
-    public_key = key_pair.public_key().export_key()
-    public_key = public_key.decode()
-
-    # Creates the request
-    request_body = {
-        "username": username,
-        "public_key": public_key
-    }   
-
-    response = requests.post(
-        SERVER_ADDRESS + SERVER_ENDPOINT_SIGNUP,
-        json= request_body
-    )
-    if response.status_code != 200:
-        print(f"Request failed with status code: {response.status_code}\n")
-        print(response.json())
-        exit_program()
-
-    print('Response received')   #
-    print(response.json())   # for testing
-
-else:
-    exit_program()

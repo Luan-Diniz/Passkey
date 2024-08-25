@@ -1,4 +1,4 @@
 flask
-pycryptodome
 requests
 psycopg2-binary
+anoncreds==0.2.0 
