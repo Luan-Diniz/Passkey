@@ -1,4 +1,4 @@
 flask
-pycryptodome
+pycryptodome==3.20.0
 requests
 psycopg2-binary
