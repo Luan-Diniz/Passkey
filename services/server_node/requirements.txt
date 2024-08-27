@@ -1,4 +1,4 @@
-flask
-requests
+flask==3.0.3
+requests==2.32.3
 psycopg2-binary
 anoncreds==0.2.0 
