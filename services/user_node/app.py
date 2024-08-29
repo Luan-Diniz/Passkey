@@ -135,7 +135,6 @@ while True:
             print(response.json())
             exit_program()
 
-        print('Response received')   
         # Creates Credential Request.
         cred_offer = CredentialOffer.load(response.json()['cred_offer'])
         cred_def_pub = CredentialDefinition.load(response.json()['cred_def_pub'])
@@ -163,7 +162,7 @@ while True:
         recv_cred = issue_cred.process(                                                 
             cred_request_metadata, link_secret, cred_def_pub, rev_reg_def_pub
         )
-
+        print("Received issued credential!")
         with open("link_secret", "w") as f:
             f.write(link_secret)
 
